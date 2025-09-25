@@ -1,1 +1,3 @@
 .vscode
+__pycache__
+ctd_kg_pipeline_output
