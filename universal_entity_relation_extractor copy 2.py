@@ -11,12 +11,10 @@ from config import PDF_FILE, CSV_DIR
 OUTPUT_DIR = CSV_DIR
 
 def extract_sections_and_content(pdf_path: str):
-    """通用提取器：章节、关注点、表格（按页码归属）"""
     with pdfplumber.open(pdf_path) as pdf:
         pages_text = [(i+1, page.extract_text(x_tolerance=1, y_tolerance=1) or "") for i, page in enumerate(pdf.pages)]
         pages_tables = [(i+1, page.extract_tables()) for i, page in enumerate(pdf.pages)]
 
-    # 合并全文行（带页码）
     all_lines = []
     for page_num, text in pages_text:
         for line in text.split('\n'):
@@ -24,70 +22,84 @@ def extract_sections_and_content(pdf_path: str):
             if line:
                 all_lines.append((page_num, line))
 
-    # 识别章节（通用正则）
-    section_pattern = r'^(\d+\.\d+\.P\.\d+(?:\.\d+)*)(?:\s+)(.+).*'
+    # 章节编号正则（3~5级，实际最高5级）
+    section_id_pattern = r'^2\.3\.P\.\d+(?:\.\d+){0,3}.*'
     sections = []
-    sec_relations = []
-    current = None
+    i = 0
 
-    for page_num, line in all_lines:
-        if re.match(r'^\d+\.\d+\.P$', line):  # 跳过 "2.3.P"
-            continue
-        match = re.match(section_pattern, line)
+    while i < len(all_lines):
+        page_num, line = all_lines[i]
         if line.startswith("2.3.P.2.1.1"):
             print(line)
-        if match:
-            sec_id = match.group(1).strip()
-            title = match.group(2).strip()
-            current = {"id": sec_id, "title": title, "start_page": page_num, "focus": "", "tables": []}
-            # 检查是否已有相同 id 的章节
-            existing = None
-            for i, sec in enumerate(sections):
-                if sec["id"] == current["id"]:
-                    existing = i
-                    break
+        #清晰标题，先判断不是目录，再进行按空格切分
+        if ".........." in line:
+            i += 1
+            continue
+        section_name = line.split(" ")[0] 
+        # 跳过页眉（如 "2.3.P制剂"）
+        if re.match(r'^2\.3\.P$', section_name):
+            i += 1
+            continue
 
-            if existing is not None:
-                # 已存在相同 id 的章节
-                existing_sec = sections[existing]
-                # 判断哪条标题更完整（不含 '....'）
-                if "...." in existing_sec["title"] and "...." not in current["title"]:
-                    # 旧标题含 '....'，新标题完整 → 替换
-                    sections[existing] = current
-                    current = None
-                elif "...." in current["title"] and "...." not in existing_sec["title"]:
-                    # 新标题含 '....'，旧标题完整 → 丢弃新记录，不做 append
-                    current = None
+        # 匹配章节编号（如 2.3.P.2.1.1）
+        if re.match(section_id_pattern, section_name):
+            sec_id = section_name
+            title = "..."
+
+            # 尝试读取下一行作为标题（非编号行）
+            if i + 1 < len(all_lines):
+                next_line = all_lines[i+1][1].strip()
+                # 标题不能是另一个章节编号或页眉
+                if (not re.match(section_id_pattern, next_line) 
+                    and not re.match(r'^2\.3\.P$', next_line)
+                    and not next_line.isdigit()):  # 避免页码
+                    title = next_line
+                    i += 2  # 跳过编号+标题
                 else:
-                    # 两者都含或都不含 '....'，保留第一个（或可合并，此处保留原逻辑）
-                    current = None
+                    i += 1
+            else:
+                i += 1
 
-            # 只有 current 有效时才 append
-            if current is not None:
-                sections.append(current)
-        elif current and "【关注点】" in line:
-            # 收集关注点（直到下一章节）
-            idx = all_lines.index((page_num, line))
-            focus = ""
-            for p, l in all_lines[idx+1:]:
-                if re.match(section_pattern, l) or l.startswith("2.3.P"):
+            # 去重：保留不含 '...' 的标题
+            existing = None
+            for j, sec in enumerate(sections):
+                if sec["id"] == sec_id:
+                    existing = j
                     break
-                if l and "【关注点】" not in l:
-                    focus += l + " "
-            current["focus"] = re.sub(r'\s+', ' ', focus).strip()
 
-    # 关联表格（按页码区间）
-    for i, sec in enumerate(sections):
-        start = sec["start_page"]
-        end = sections[i+1]["start_page"] - 1 if i+1 < len(sections) else float('inf')
-        tables_in_section = []
-        for page_num, tables in pages_tables:
-            if start <= page_num <= end:
-                for tbl in tables:
-                    if tbl and len(tbl) > 1:
-                        tables_in_section.append(tbl)
-        sec["tables"] = tables_in_section
+            new_sec = {"id": sec_id, "title": title, "start_page": page_num, "focus": "", "tables": []}
+            if existing is not None:
+                old_sec = sections[existing]
+                if "..." in old_sec["title"] and "..." not in title:
+                    sections[existing] = new_sec
+            else:
+                sections.append(new_sec)
+        else:
+            i += 1
 
+    # ...（后续：提取关注点、表格，关联页码）
+        elif current and "【关注点】" in line:
+                # 收集关注点（直到下一章节）
+                idx = all_lines.index((page_num, line))
+                focus = ""
+                for p, l in all_lines[idx+1:]:
+                    if re.match(section_pattern, l) or l.startswith("2.3.P"):
+                        break
+                    if l and "【关注点】" not in l:
+                        focus += l + " "
+                current["focus"] = re.sub(r'\s+', ' ', focus).strip()
+
+        # 关联表格（按页码区间）
+        for i, sec in enumerate(sections):
+            start = sec["start_page"]
+            end = sections[i+1]["start_page"] - 1 if i+1 < len(sections) else float('inf')
+            tables_in_section = []
+            for page_num, tables in pages_tables:
+                if start <= page_num <= end:
+                    for tbl in tables:
+                        if tbl and len(tbl) > 1:
+                            tables_in_section.append(tbl)
+            sec["tables"] = tables_in_section
     return sections
 
 def generate_csvs(sections: List[Dict], output_dir: str):

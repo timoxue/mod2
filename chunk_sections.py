@@ -15,17 +15,35 @@ def extract_sections_and_content(pdf_path: str):
     with pdfplumber.open(pdf_path) as pdf:
         pages_text = [(i+1, page.extract_text(x_tolerance=1, y_tolerance=1) or "") for i, page in enumerate(pdf.pages)]
         pages_tables = [(i+1, page.extract_tables()) for i, page in enumerate(pdf.pages)]
+        _, text = pages_text[6]
+        print(text)
+    # 识别章节（通用正则）
+    section_pattern = r'^(\d+\.\d+\.P\.\d+(?:\.\d+)*)(?:\s+)(.+).*'
 
-    # 合并全文行（带页码）
+    # 合并全文行（带页码）并拆分出4级标题及正文lines
     all_lines = []
+    level4_lines = []
+    chunk = []
+    sec_id = "UKNOWN"
     for page_num, text in pages_text:
         for line in text.split('\n'):
             line = line.strip()
             if line:
                 all_lines.append((page_num, line))
 
-    # 识别章节（通用正则）
-    section_pattern = r'^(\d+\.\d+\.P\.\d+(?:\.\d+)*)(?:\s+)(.+).*'
+                match = re.match(section_pattern, line)
+                if match and page_num > 2:
+                    sec_id = match.group(1).strip()
+                    title = match.group(2).strip()
+                    
+                    if len(sec_id) == 7:
+                        level4_lines.append(chunk)
+                        chunk = []
+            #包含page_num的列不保存
+            if not line.isdigit():
+                chunk.append((sec_id, line))
+    level4_lines.append(chunk)
+
     sections = []
     sec_relations = []
     current = None
@@ -34,8 +52,8 @@ def extract_sections_and_content(pdf_path: str):
         if re.match(r'^\d+\.\d+\.P$', line):  # 跳过 "2.3.P"
             continue
         match = re.match(section_pattern, line)
-        if line.startswith("2.3.P.2.1.1"):
-            print(line)
+        # if line.startswith("2.3.P.2.1.1"):
+        #     print(line)
         if match:
             sec_id = match.group(1).strip()
             title = match.group(2).strip()
