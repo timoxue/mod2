@@ -22,27 +22,33 @@ def extract_sections_and_content(pdf_path: str):
 
     # 合并全文行（带页码）并拆分出4级标题及正文lines
     all_lines = []
-    level4_lines = []
+    daopai_lines = []
     chunk = []
-    sec_id = "UKNOWN"
+    sec_id = "UKN"
+    level = 0
+    title = 'UKN'
+    parent_sid = 'UKN'
+    title_list = ''
+    idx_line = 0
+    sid_map = {}
+    title_map = {}
     for page_num, text in pages_text:
         for line in text.split('\n'):
             line = line.strip()
             if line:
-                all_lines.append((page_num, line))
-
+                all_lines.append(line)
                 match = re.match(section_pattern, line)
                 if match and page_num > 2:
                     sec_id = match.group(1).strip()
                     title = match.group(2).strip()
-                    
-                    if len(sec_id) == 7:
-                        level4_lines.append(chunk)
-                        chunk = []
+                    level = (len(sec_id)+1) / 2
+                    if level == 4:
+                        title_list =''
+                    title_list = title_list.join( sec_id +';')
             #包含page_num的列不保存
             if not line.isdigit():
-                chunk.append((sec_id, line))
-    level4_lines.append(chunk)
+                chunk.append((title_list, line))
+
 
     sections = []
     sec_relations = []
@@ -107,6 +113,9 @@ def extract_sections_and_content(pdf_path: str):
         sec["tables"] = tables_in_section
 
     return sections
+
+
+
 
 def generate_csvs(sections: List[Dict], output_dir: str):
     """生成 regulations.csv, sections.csv, requirements.csv, checkpoints.csv"""
