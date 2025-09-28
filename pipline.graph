@@ -1,0 +1,9 @@
+graph LR
+A[Neo4j] -->|按 block_id 查询| B{block_type?}
+B -->|concern| C[调用 template_concern]
+B -->|table| D[调用 template_table]
+B -->|example| E[调用 template_example]
+A -->|按 section_id 查询| F[调用 template_section]
+C & D & E & F --> G[Qwen API 生成审核点]
+G --> H[结构化存储到 Neo4j ReviewPoint 节点]
+H --> I[前端：点击问题 → 定位原文]
